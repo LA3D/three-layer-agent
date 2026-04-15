@@ -49,10 +49,12 @@ fitness_coach/
 ├── graph.py              # 9-node pydantic-graph FSM + SessionState
 ├── evaluator.py          # 4-axis methodology-grounded judge
 ├── run.py                # Side-by-side demo entry point + per-session trace persistence
+├── optimize.py           # GEPA optimization of PlanSignatureMinimal
 ├── traces/               # FileStatePersistence outputs (gitignored)
 └── tests/
     ├── test_schemas.py   # 23 round-trip + discriminated-union tests
-    └── test_methodology.py  # 32 readiness, safety, validation, fallback tests
+    ├── test_methodology.py  # 38 readiness, safety, validation, fallback tests
+    └── test_evolve_state.py # 11 idempotency, sparse-week, injury-reset tests
 ```
 
 ## Cross-population: same architecture, different schemas
@@ -91,17 +93,40 @@ uv run python -m fitness_coach.run
 # Subset for faster iteration or cost control
 uv run python -m fitness_coach.run --athletes pl_002
 
+# GEPA optimization of PlanSignatureMinimal (separate artifact, see below)
+uv run python -m fitness_coach.optimize
+
 # Tests
 uv run pytest fitness_coach/tests/ -v
 ```
 
-Requires `OPENAI_API_KEY` in environment (default model: `openai:gpt-4o-mini`). Cost: ~$0.30 per full run.
+Requires `OPENAI_API_KEY` in environment (default model: `openai:gpt-4o-mini`). Cost: ~$0.30 per full demo run; ~$0.30 per `optimize.py` run.
 
 The demo prints a per-athlete timeline with 4-axis scores (Plan Quality, Coaching Specificity, Adaptation Appropriateness, Safety Adherence) for both straw and agentic systems, plus a summary breaking down the gap on routine vs. surprise sessions.
 
 ## Trace persistence
 
 Per-session trajectories are saved as JSON to `traces/{athlete_id}/session_{n}.json` via `FileStatePersistence`. These are GEPA-ready training data — every node transition, the state before and after, and the agent outputs are captured.
+
+## GEPA optimization (`optimize.py`)
+
+A separate artifact that demonstrates what GEPA recovers when the `PlanSignature` docstring is stripped to a one-sentence contract.
+
+`optimize.py` defines a `PlanSignatureMinimal` with the same I/O contract as `signatures.PlanSignature` but a terse single-sentence docstring. It then runs GEPA against 6 hand-picked eval cases (powerlifter healthy / plateau / shoulder pain; runner healthy / ITB / returning from skip), scoring plans by `methodology.validate_plan` (binary pass/fail respecting `halted_movements`).
+
+Result on a fresh run (60 metric calls, gpt-4o-mini task LM, gpt-4o reflection LM):
+
+| | Seed | Optimized |
+|---|---|---|
+| Instruction length | 56 chars | ~1700 chars |
+| Pass rate (6 cases) | **17%** (1/6) | **83%** (5/6) |
+| Lift | — | **+67 pp** |
+
+GEPA's optimized text rebuilds — without hand-engineering — the deload-after-3-failures rule, the 80/20 easy-distribution, the ≥3-runs-per-runner-week minimum, and the halted-movement omission. In other words, the elaboration that the production `PlanSignature` ships with hand-tuned in the docstring is the kind of content GEPA can derive from a tight contract + an evaluation function.
+
+**Critical setup detail:** `PlanGEPAAdapter` constructs its agent with `model_settings={"temperature": 0.0}`. With default temperature, the same prompt produces different plans across runs and GEPA's signal is dominated by sampling noise (we measured 17%, 50%, 83% on identical inputs across re-runs). Always set `temperature=0` when using GEPA against an LLM agent — see [`PlanGEPAAdapter.__init__`](./optimize.py) for the canonical setup.
+
+The single remaining failure (rn_002 ITB case in our latest run) is an LLM schema slip — gpt-4o-mini occasionally produces non-`RunActivity` entries even with explicit instructions. That's a compliance issue no amount of prompt tuning fully fixes; in production the graph's `ValidateNode` + 2-retry + `FallbackPlanNode` is the right answer for that class of error.
 
 ## When this pattern is useful elsewhere
 
