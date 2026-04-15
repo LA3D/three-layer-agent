@@ -1,10 +1,10 @@
 # fitness_coach — multi-session agentic toy
 
-A non-clinical architectural parallel to the ACE-AI cognitive core, built to demonstrate that the three-layer stack (DSPy Signature + PydanticAI Agent + pydantic-graph + GEPA) supports the architecturally distinctive elements that the `toy.py` / `toy_branching.py` / `toy_loop_persist.py` / `toy_gepa_optimize.py` toys don't yet exercise.
+A worked example showing that the three-layer stack (DSPy Signature + PydanticAI Agent + pydantic-graph + GEPA) supports the architectural elements the four single-session toys (`toy.py`, `toy_branching.py`, `toy_loop_persist.py`, `toy_gepa_optimize.py`) don't yet exercise. Strength training and recreational running are the chosen domain because they have well-published deterministic methodologies (Rippetoe Starting Strength, Daniels' Running Formula) that supply both the rule layer and the evaluator's grounding rubric — no domain expert in the loop required.
 
 ## What this toy demonstrates
 
-The other four toys are all single-session and memoryless. This one exercises seven architectural elements that real agentic systems need:
+The other four toys are all single-session and memoryless. This one exercises seven architectural elements that real multi-session agentic systems need:
 
 | Element | Where it shows up here |
 |---|---|
@@ -63,7 +63,7 @@ fitness_coach/
 |---|---|---|
 | Activity vocabulary | `LiftActivity` (squat/bench/deadlift/ohp/row) | `RunActivity` (easy/tempo/interval/long/recovery) |
 | State fields | `current_lifts: dict[str, float]`, `consecutive_failed_sessions` | `vdot`, `current_weekly_mileage`, `weeks_at_current_mileage` |
-| Methodology | `LinearProgression` (Rippetoe; +5/+2.5 lb increments; 3-failure deload) | `DaniersRunning` (Daniels; +10%/wk cap; 80/20 distribution) |
+| Methodology | `LinearProgression` (Rippetoe; +5/+2.5 lb increments; 3-failure deload) | `DanielsRunning` (Daniels; +10%/wk cap; 80/20 distribution) |
 | Safety threshold | Pain ≥ moderate → halt movement | Pain or injury recurrence → halt activity |
 
 What stays the same across populations:
@@ -103,19 +103,14 @@ The demo prints a per-athlete timeline with 4-axis scores (Plan Quality, Coachin
 
 Per-session trajectories are saved as JSON to `traces/{athlete_id}/session_{n}.json` via `FileStatePersistence`. These are GEPA-ready training data — every node transition, the state before and after, and the agent outputs are captured.
 
-## Where this maps onto the ACE-AI architecture
+## When this pattern is useful elsewhere
 
-| ACE-AI element | Fitness analog |
-|---|---|
-| InterpretNode (VLM → tokens) | `IngestNode` (parse SessionLog) |
-| ObserveNode (DPICS coding) | `ObserveNode` (signal coding) |
-| PlanNode | `PlanNode` |
-| Mastery-bundle constraint check | `ValidateNode` deterministic methodology check |
-| Safety override (escalation on distress) | `SafetyHaltNode` |
-| CoachNode (parent guidance) | `CoachNode` (cues for athlete) |
-| AdaptNode (state transition proposal) | `AdaptNode` |
-| SummarizeNode (clinician handoff) | `SummarizeNode` (next-session handoff) |
-| Cross-population (autism + dementia) | Cross-population (powerlifter + runner) |
-| Clinical evaluator twin | `evaluator.py` methodology-grounded judge |
+Any multi-session agentic system where:
 
-The structural parallel is the point. If the architectural pattern works here on cheap synthetic data, it gets us empirical confidence before it's load-bearing in a clinical context.
+- Longitudinal state evolves across sessions and the next session's planning depends on prior context
+- A deterministic rule layer (here, training methodology) sets safety and progression constraints the LLM cannot bypass
+- Evidence comes from multiple streams with varying trust (here: athlete self-report vs. objective metric vs. coach observation)
+- A handoff document between sessions is the right level of context-compression — not a vector retrieval over raw episodes
+- The same architecture should serve multiple populations with different schemas and constraints
+
+Domains where this shape applies: tutoring across sessions, longitudinal coaching of any kind (writing, music practice), agent-driven project management with weekly cycles, plant-care advisors with recurring observations, RPG game-master agents that track campaign state across play sessions.

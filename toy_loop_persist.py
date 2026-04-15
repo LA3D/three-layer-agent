@@ -226,8 +226,8 @@ async def run_with_file_persistence(task: str, json_path: Path):
 
     FileStatePersistence serializes state + node transitions to disk. If the
     process crashes mid-run, the next invocation can load the file and resume
-    from where it left off — critical for long-running sessions like clinical
-    workflows where a dropped API call shouldn't restart the whole pipeline.
+    from where it left off — useful for long-running multi-step agent runs
+    where a dropped API call shouldn't restart the whole pipeline.
     """
     graph = Graph(nodes=[GenerateNode, CritiqueNode])
     state = CriticLoopState(task=task, max_iterations=2)

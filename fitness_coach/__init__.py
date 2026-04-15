@@ -1,11 +1,12 @@
 """Fitness coach toy — multi-session agentic demo of the three-layer stack.
 
-Architectural parallel to the ACE-AI cognitive core, demonstrating:
-  - Multi-session longitudinal state with handoff document
+A worked example of architectural patterns that single-session toys don't
+exercise:
+  - Multi-session longitudinal state with a generated handoff document
   - Typed state-transition reasoning with formal constraint validation
   - Evidence with provenance (multi-stream trust-weighted)
   - Per-step validation with deterministic fallback
-  - Hard safety overrides
+  - Tiered safety overrides
   - Cross-population generality (powerlifters + runners, same architecture)
   - Side-by-side comparison vs. rigid expert-system "straw coach"
 

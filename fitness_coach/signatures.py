@@ -73,8 +73,8 @@ class PlanSignature(dspy.Signature):
     athlete handled volume well without recovery deficits or pain markers.
     Default for athletes returning from disruption, injury, or low base
     mileage: ALL easy/long, NO quality. When in doubt, omit quality. Do
-    NOT collapse a week into a single long run — that's clinically unsafe
-    and violates the distribution rule.
+    NOT collapse a week into a single long run — that's structurally unsafe
+    for recovering athletes and violates the distribution rule.
 
     Read the prior session's observation and handoff to identify what
     should be the focus this session. If the observation flags a concern

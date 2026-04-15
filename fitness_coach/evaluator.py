@@ -4,16 +4,16 @@ Used to compare straw_coach and agentic-graph outputs side-by-side. The
 judge is grounded in the published methodology rules (encoded as a
 context string) and produces axis-by-axis scores with rationales.
 
-This mirrors the ACE-AI clinical evaluator digital twin pattern (§7.4 of
-the Research-First Analysis): "judge grounded in published clinical
-training materials." For this toy: judge grounded in published training
-methodology (Rippetoe Starting Strength, Daniels' Running Formula).
+The "judge grounded in published materials" pattern matters because no
+real coach is in the loop here — published Rippetoe Starting Strength
+and Daniels' Running Formula text supplies the rubric the LLM judge
+scores against.
 
-Limitations to keep in mind (mirroring ACE-AI's documented caveats):
+Limitations to keep in mind:
   - The judge is "at best equivalent to a freshly trained coach who has
     read the manual but never seen an athlete"
   - LLM judges have known biases (verbosity, authority, capability)
-  - The judge cannot evaluate clinical knowledge it doesn't have
+  - The judge cannot evaluate domain knowledge it does not have
 """
 
 from __future__ import annotations

@@ -1,8 +1,5 @@
 """Three-layer composition demo: DSPy Signature + PydanticAI Agent + pydantic-graph.
 
-Validates the pattern claimed in:
-  ACE-AI Cognitive Core - Three-Layer Stack and Dual-Scale State (§1.4)
-
 Pattern:
   1. DSPy Signature — declarative contract (typed I/O fields + docstring instruction)
   2. PydanticAI Agent — runtime, built from the signature's output type + docstring
