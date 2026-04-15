@@ -36,6 +36,7 @@ from toy import agent_from_signature  # noqa: E402
 
 from fitness_coach.methodology import (  # noqa: E402
     get_methodology,
+    movements_to_halt,
     session_should_halt,
 )
 from fitness_coach.schemas import (  # noqa: E402
@@ -177,7 +178,7 @@ class SafetyHaltNode(BaseNode[SessionState, None, SessionEndResult]):
 @dataclass
 class ObserveNode(BaseNode[SessionState, None, SessionEndResult]):
     async def run(self, ctx: GraphRunContext[SessionState]) -> "PlanNode":
-        agent = agent_from_signature(ObserveSignature, model=ctx.state.model)
+        agent = agent_from_signature(ObserveSignature, model=ctx.state.model, output_retries=3)
         prompt = _render_prompt(
             ObserveSignature,
             athlete_state=ctx.state.athlete_state,
@@ -196,7 +197,20 @@ class ObserveNode(BaseNode[SessionState, None, SessionEndResult]):
 class PlanNode(BaseNode[SessionState, None, SessionEndResult]):
     async def run(self, ctx: GraphRunContext[SessionState]) -> "ValidateNode":
         ctx.state.validation_attempts += 1
-        agent = agent_from_signature(PlanSignature, model=ctx.state.model)
+        agent = agent_from_signature(PlanSignature, model=ctx.state.model, output_retries=3)
+
+        # Halted movements (moderate+ severity signals) — surfaced explicitly to
+        # the LLM on every attempt, not just retries. This is the LLM-side half
+        # of the safety override; ValidateNode is the deterministic backstop.
+        halted = movements_to_halt(ctx.state.session_log.safety_signals)
+        halted_hint = ""
+        if halted:
+            halted_hint = (
+                f"\n\nHALTED MOVEMENTS THIS SESSION (do NOT include in plan): "
+                f"{sorted(halted)}\n"
+                f"These movements have moderate+ pain signals from the prior session and "
+                f"must be omitted or substituted."
+            )
 
         # If we're on a retry, include the previous validation feedback in the prompt
         retry_hint = ""
@@ -215,7 +229,7 @@ class PlanNode(BaseNode[SessionState, None, SessionEndResult]):
             athlete_state=ctx.state.athlete_state,
             observation=ctx.state.observation,
             prior_handoff=ctx.state.prior_handoff or "(no prior handoff — this is the first session)",
-        ) + retry_hint
+        ) + halted_hint + retry_hint
 
         result = await agent.run(prompt)
         ctx.state.plan = result.output
@@ -233,7 +247,13 @@ class ValidateNode(BaseNode[SessionState, None, SessionEndResult]):
     ) -> "PlanNode | FallbackPlanNode | CoachNode":
         assert ctx.state.plan is not None, "PlanNode must run before ValidateNode"
         methodology = get_methodology(ctx.state.athlete_state)
-        result = methodology.validate_plan(ctx.state.athlete_state, ctx.state.plan)
+        # Compute the set of movements halted by this session's safety signals
+        # (moderate+ severity) and pass to the methodology validator. Any plan
+        # activity targeting a halted movement is rejected.
+        halted = movements_to_halt(ctx.state.session_log.safety_signals)
+        result = methodology.validate_plan(
+            ctx.state.athlete_state, ctx.state.plan, halted_movements=halted,
+        )
         ctx.state.validation_results.append(result)
 
         if result.is_valid:
@@ -265,7 +285,7 @@ class FallbackPlanNode(BaseNode[SessionState, None, SessionEndResult]):
 @dataclass
 class CoachNode(BaseNode[SessionState, None, SessionEndResult]):
     async def run(self, ctx: GraphRunContext[SessionState]) -> "AdaptNode":
-        agent = agent_from_signature(CoachSignature, model=ctx.state.model)
+        agent = agent_from_signature(CoachSignature, model=ctx.state.model, output_retries=3)
         assert ctx.state.plan is not None
         prompt = _render_prompt(
             CoachSignature,
@@ -286,7 +306,7 @@ class AdaptNode(BaseNode[SessionState, None, SessionEndResult]):
     async def run(
         self, ctx: GraphRunContext[SessionState],
     ) -> "SummarizeNode | SafetyHaltNode":
-        agent = agent_from_signature(AdaptSignature, model=ctx.state.model)
+        agent = agent_from_signature(AdaptSignature, model=ctx.state.model, output_retries=3)
         assert ctx.state.observation is not None
         prompt = _render_prompt(
             AdaptSignature,
@@ -316,7 +336,7 @@ class AdaptNode(BaseNode[SessionState, None, SessionEndResult]):
 @dataclass
 class SummarizeNode(BaseNode[SessionState, None, SessionEndResult]):
     async def run(self, ctx: GraphRunContext[SessionState]) -> End[SessionEndResult]:
-        agent = agent_from_signature(SummarizeSignature, model=ctx.state.model)
+        agent = agent_from_signature(SummarizeSignature, model=ctx.state.model, output_retries=3)
         assert ctx.state.observation is not None
         assert ctx.state.proposed_transition is not None
         prompt = _render_prompt(

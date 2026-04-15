@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,12 +57,29 @@ TRACES_ROOT = Path(__file__).parent / "traces"
 # State evolution — derive longitudinal state from prior session log
 # ====================================================================
 
+# Threshold below which a runner's session log is treated as a "disruption"
+# (skipped week, illness) rather than a real reduction. Sparse logs do not
+# overwrite current_weekly_mileage — they carry no information about the
+# athlete's sustainable mileage.
+SPARSE_RUN_LOG_THRESHOLD = 3
+
+
 def evolve_state(prior_state: AthleteState, prior_log: SessionLog) -> AthleteState:
     """Update longitudinal state to reflect what happened in `prior_log`.
+
+    Idempotent: short-circuits if `prior_log.session_index` has already been
+    applied (matches `prior_state.last_evolved_session_index`).
 
     Both straw and agentic coaches see the same evolved state — comparison is
     on their reactions to identical inputs, not cumulative impact.
     """
+    # Idempotency guard — repeated calls with the same log return the same state
+    if (
+        prior_state.last_evolved_session_index is not None
+        and prior_log.session_index <= prior_state.last_evolved_session_index
+    ):
+        return prior_state
+
     if isinstance(prior_state, PowerlifterState):
         new = prior_state.model_copy(deep=True)
         for activity in prior_log.activity_log:
@@ -75,15 +93,26 @@ def evolve_state(prior_state: AthleteState, prior_log: SessionLog) -> AthleteSta
                 )
             else:
                 new.consecutive_failed_sessions[activity.exercise] = 0
+        new.last_evolved_session_index = prior_log.session_index
         return new
 
     if isinstance(prior_state, RunnerState):
         new = prior_state.model_copy(deep=True)
         runs = [a for a in prior_log.activity_log if isinstance(a, RunActivity)]
-        new.current_weekly_mileage = sum(r.distance_mi for r in runs)
-        # A "skipped week" (only 1 short run) shouldn't increment weeks_at_current_mileage
-        if len(runs) >= 3 and not new.injury_history:
-            new.weeks_at_current_mileage += 1
+
+        # Sparse log = disruption (skipped week, illness, travel). It carries
+        # no information about sustainable mileage. Do not overwrite baseline
+        # and do not increment the weeks-at-current counter.
+        if len(runs) >= SPARSE_RUN_LOG_THRESHOLD:
+            new.current_weekly_mileage = sum(r.distance_mi for r in runs)
+            if not new.injury_history:
+                new.weeks_at_current_mileage += 1
+            else:
+                # Injury triggers a hold — counter resets so progression
+                # readiness is re-earned after the injury clears.
+                new.weeks_at_current_mileage = 0
+
+        new.last_evolved_session_index = prior_log.session_index
         return new
 
     raise TypeError(f"Unknown state type: {type(prior_state).__name__}")
@@ -286,7 +315,10 @@ def print_summary(all_comparisons: list[SessionComparison]):
 # Entry point
 # ====================================================================
 
-async def main_async(athlete_filter: list[str] | None = None):
+async def main_async(
+    athlete_filter: list[str] | None = None,
+    clean_traces: bool = True,
+):
     print("=" * 78)
     print("FITNESS COACH TOY — agentic cognitive core vs. rigid straw coach")
     print("=" * 78)
@@ -294,6 +326,15 @@ async def main_async(athlete_filter: list[str] | None = None):
     print("Architecture: pydantic-graph FSM + DSPy signatures + PydanticAI agents")
     print("              + deterministic methodology validators + safety overrides")
     print()
+
+    if clean_traces and TRACES_ROOT.exists():
+        # Wipe trace dir before run — FileStatePersistence appends, so stale
+        # snapshots from earlier runs would otherwise pollute the JSON.
+        shutil.rmtree(TRACES_ROOT, ignore_errors=True)
+        TRACES_ROOT.mkdir(parents=True, exist_ok=True)
+        print(f"Cleaned traces directory: {TRACES_ROOT}")
+        print()
+
     print("State graph:")
     print(build_graph().mermaid_code())
     print()
@@ -318,8 +359,12 @@ def main():
     parser.add_argument("--athletes", nargs="*", default=None,
                         help="Restrict to specific athlete IDs (e.g. pl_002 rn_001). "
                              "Default: all athletes.")
+    parser.add_argument("--no-clean-traces", action="store_true",
+                        help="Skip wiping fitness_coach/traces/ before the run. "
+                             "Default behavior cleans the traces dir first to avoid "
+                             "FileStatePersistence appending to stale files.")
     args = parser.parse_args()
-    asyncio.run(main_async(args.athletes))
+    asyncio.run(main_async(args.athletes, clean_traces=not args.no_clean_traces))
 
 
 if __name__ == "__main__":

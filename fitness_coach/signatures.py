@@ -57,19 +57,39 @@ class PlanSignature(dspy.Signature):
     """Propose the next session prescription given longitudinal state, observation, and prior handoff.
 
     Produce a PlanProposal that respects the athlete's current methodology.
-    For powerlifters: choose loads consistent with linear progression (current
-    or current ± standard increment), 3-5 sets of 3-5 reps. For runners: keep
-    weekly mileage within +10% of current, maintain ≥80% easy distribution.
 
-    Read the prior session's observation and handoff to identify what should
-    be the focus this session. If the observation flags a concern (e.g.,
-    rising RPE, recovery deficit), do not progress — hold or deload. If the
-    handoff focused on a specific dimension, address it.
+    For powerlifters: a "session" is one workout. Choose loads consistent
+    with linear progression (current or current + standard increment of
+    +5 lb squat/deadlift, +2.5 lb bench/ohp). Use 3-5 sets of 3-5 reps;
+    deadlift may be 1x5 (Rippetoe convention).
+
+    For runners: a "session" is one training WEEK, not a single run. The
+    PlanProposal MUST contain at least 3 distinct RunActivity entries
+    distributed across the week. Keep weekly mileage within +10% of
+    current. Maintain ≥80% easy/recovery/long distribution (long runs
+    count as easy mileage in Daniels — they're at conversational pace,
+    not threshold). Quality work (tempo, interval) is capped at 20% and
+    should ONLY be included when the prior week's evidence shows the
+    athlete handled volume well without recovery deficits or pain markers.
+    Default for athletes returning from disruption, injury, or low base
+    mileage: ALL easy/long, NO quality. When in doubt, omit quality. Do
+    NOT collapse a week into a single long run — that's clinically unsafe
+    and violates the distribution rule.
+
+    Read the prior session's observation and handoff to identify what
+    should be the focus this session. If the observation flags a concern
+    (e.g., rising RPE, recovery deficit, returning injury markers), do
+    not progress — hold or deload. After three consecutive failed
+    sessions on a lift, methodology requires a 10% deload before any
+    further progression or hold.
+
+    Halted movements (declared in the prompt or implicit from session
+    safety signals) MUST be omitted from the plan or substituted.
 
     The deterministic ValidateNode will check your proposal against
-    methodology constraints. If your plan is invalid you'll get a chance to
-    revise; after two failures, a safe default plan is used. Plan well the
-    first time."""
+    methodology constraints. If your plan is invalid you'll get a chance
+    to revise; after two failures, a safe default plan is used. Plan well
+    the first time."""
 
     athlete_state: AthleteState = dspy.InputField(
         desc="Current longitudinal state",

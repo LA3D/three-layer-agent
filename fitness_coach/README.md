@@ -12,7 +12,7 @@ The other four toys are all single-session and memoryless. This one exercises se
 | Session-to-session handoff document | `SummarizeNode` produces a `HandoffDoc` that the next session's `PlanNode` reads as primary context |
 | Evidence with provenance | `EvidenceItem` carries explicit `source` + `trust_weight`; `ObserveSignature` reasons about provenance |
 | Per-step validation catching reasoning errors | `ValidateNode` deterministic check; up to 2 plan retries; then `FallbackPlanNode` |
-| Hard safety overrides | `SafetyHaltNode` fires from `IngestNode` (input pain signal) OR `AdaptNode` (proposed unsafe transition) |
+| Tiered safety overrides | Two layers, two severities. **High/critical** signal at `IngestNode` halts the whole session via `SafetyHaltNode`. **Moderate** signal halts the offending movement via `movements_to_halt` → `ValidateNode` (rejects any plan that includes the halted movement; `PlanNode` is also told upfront in the prompt). `AdaptNode` independently safety-checks proposed state transitions against methodology thresholds. |
 | Cross-population generality | Same graph + signatures + evaluator serve powerlifters AND runners; only `schemas.py` + `methodology.py` + `synthetic.py` differ per population |
 | Side-by-side comparison vs. rigid expert system | `straw_coach.py` mechanically follows linear progression / Daniels rules with no awareness of pain, sleep, or evidence |
 

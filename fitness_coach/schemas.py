@@ -147,6 +147,11 @@ class PowerlifterState(BaseModel):
         description="Per-lift count of recent sessions where target was missed",
     )
     progression_history: list[ProgressionEvent] = []
+    last_evolved_session_index: int | None = Field(
+        default=None,
+        description="Index of the most recent session_log applied by evolve_state. "
+                    "Used to short-circuit repeated evolution calls and keep counter math idempotent.",
+    )
 
 
 class RunnerState(BaseModel):
@@ -163,6 +168,11 @@ class RunnerState(BaseModel):
     injury_history: list[str] = []
     weeks_at_current_mileage: int = Field(default=0, ge=0)
     progression_history: list[ProgressionEvent] = []
+    last_evolved_session_index: int | None = Field(
+        default=None,
+        description="Index of the most recent session_log applied by evolve_state. "
+                    "Used to short-circuit repeated evolution calls and keep counter math idempotent.",
+    )
 
 
 AthleteState = Annotated[

@@ -233,7 +233,7 @@ async def evaluate_session_output(
 
     Returns an `EvaluatorReport` with 4 axes scored 1-5 plus rationales.
     """
-    agent = agent_from_signature(EvaluateSignature, model=model)
+    agent = agent_from_signature(EvaluateSignature, model=model, output_retries=3)
     output_dict = _normalize_output_to_dict(output)
 
     prompt_parts = []

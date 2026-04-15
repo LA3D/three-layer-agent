@@ -62,7 +62,8 @@ PL_001_SESSIONS = [
                          content="Bar speed on top sets consistent with previous week."),
         ],
     ),
-    # Session 1 — clean progression
+    # Session 1 — clean progression. OHP dropped from program here onward
+    # (see evidence) — Sam preferred a tighter 3-lift split.
     SessionLog(
         athlete_id="pl_001", session_index=1, session_date=date(2026, 4, 3),
         activity_log=[
@@ -73,6 +74,8 @@ PL_001_SESSIONS = [
         evidence=[
             EvidenceItem(source="athlete_self_report", trust_weight="high",
                          content="Clean progression; no issues."),
+            EvidenceItem(source="athlete_self_report", trust_weight="medium",
+                         content="Dropped OHP from the program — preferring a 3-lift split focused on squat/bench/deadlift; will reassess in 4 weeks."),
         ],
     ),
     # Session 2 — SURPRISE: bad sleep, RPE jumps

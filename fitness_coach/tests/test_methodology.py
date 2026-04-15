@@ -10,7 +10,7 @@ from datetime import date
 import pytest
 
 from fitness_coach.methodology import (
-    DaniersRunning,
+    DanielsRunning,
     LinearProgression,
     METHODOLOGIES,
     get_methodology,
@@ -168,6 +168,99 @@ class TestLinearProgressionValidate:
 # Linear progression — safety_check_transition
 # ====================================================================
 
+class TestLinearDeloadRule:
+    def setup_method(self):
+        self.method = LinearProgression()
+
+    def test_deload_required_after_3_consecutive_failures(self):
+        state = make_powerlifter(bench=200.0, consecutive_fails={"bench": 3})
+        plan = PlanProposal(
+            next_session_index=4,
+            activities=[LiftActivity(exercise="bench", sets=3, reps_per_set=[5, 5, 5], load_lb=200.0)],
+            rationale="hold load through plateau",
+        )
+        result = self.method.validate_plan(state, plan)
+        assert not result.is_valid
+        assert any("consecutive failed sessions require a deload" in v for v in result.violations)
+
+    def test_deload_satisfied_by_10pct_reduction(self):
+        state = make_powerlifter(bench=200.0, consecutive_fails={"bench": 3})
+        plan = PlanProposal(
+            next_session_index=4,
+            activities=[LiftActivity(exercise="bench", sets=3, reps_per_set=[5, 5, 5], load_lb=180.0)],
+            rationale="deload bench after plateau",
+        )
+        result = self.method.validate_plan(state, plan)
+        assert result.is_valid, result.violations
+
+    def test_deload_does_not_fire_below_threshold(self):
+        # 2 failures should NOT trigger the deload rule
+        state = make_powerlifter(bench=200.0, consecutive_fails={"bench": 2})
+        plan = PlanProposal(
+            next_session_index=3,
+            activities=[LiftActivity(exercise="bench", sets=3, reps_per_set=[5, 5, 5], load_lb=200.0)],
+            rationale="hold through second failure",
+        )
+        result = self.method.validate_plan(state, plan)
+        assert result.is_valid, result.violations
+
+    def test_suggested_adjustment_references_deload(self):
+        state = make_powerlifter(bench=200.0, consecutive_fails={"bench": 3})
+        plan = PlanProposal(
+            next_session_index=4,
+            activities=[LiftActivity(exercise="bench", sets=3, reps_per_set=[5, 5, 5], load_lb=200.0)],
+            rationale="ignoring deload",
+        )
+        result = self.method.validate_plan(state, plan)
+        assert result.suggested_adjustment is not None
+        assert "deload" in result.suggested_adjustment.lower()
+
+
+class TestLinearHaltedMovements:
+    def setup_method(self):
+        self.method = LinearProgression()
+        self.state = make_powerlifter()
+
+    def test_validate_rejects_plan_with_halted_movement(self):
+        plan = PlanProposal(
+            next_session_index=1,
+            activities=[
+                LiftActivity(exercise="squat", sets=3, reps_per_set=[5, 5, 5], load_lb=225.0),
+                LiftActivity(exercise="bench", sets=3, reps_per_set=[5, 5, 5], load_lb=155.0),
+            ],
+            rationale="standard session",
+        )
+        result = self.method.validate_plan(
+            self.state, plan, halted_movements={"bench"},
+        )
+        assert not result.is_valid
+        assert any("halted for this session" in v for v in result.violations)
+
+    def test_validate_accepts_substitution_omitting_halted_movement(self):
+        plan = PlanProposal(
+            next_session_index=1,
+            activities=[
+                LiftActivity(exercise="squat", sets=3, reps_per_set=[5, 5, 5], load_lb=225.0),
+                LiftActivity(exercise="deadlift", sets=1, reps_per_set=[5], load_lb=275.0),
+            ],
+            rationale="omit bench due to halt",
+        )
+        result = self.method.validate_plan(
+            self.state, plan, halted_movements={"bench"},
+        )
+        assert result.is_valid, result.violations
+
+    def test_validate_with_no_halted_movements_unchanged(self):
+        plan = PlanProposal(
+            next_session_index=1,
+            activities=[LiftActivity(exercise="squat", sets=3, reps_per_set=[5, 5, 5], load_lb=225.0)],
+            rationale="test",
+        )
+        # Default frozenset() should not affect validation
+        result = self.method.validate_plan(self.state, plan)
+        assert result.is_valid, result.violations
+
+
 class TestLinearSafetyTransition:
     def setup_method(self):
         self.method = LinearProgression()
@@ -251,28 +344,43 @@ class TestLinearFallback:
 # Daniels running — validate_plan
 # ====================================================================
 
-class TestDaniersValidate:
+class TestDanielsValidate:
     def setup_method(self):
-        self.method = DaniersRunning()
+        self.method = DanielsRunning()
         self.state = make_runner(weekly=30.0)
 
-    def test_valid_plan_under_cap(self):
+    def test_quality_too_high_rejected(self):
+        # 27 mi total: easy 14 + tempo 8 + interval 5 = 14/27 = 52% easy → fails 80/20
+        plan = PlanProposal(
+            next_session_index=1,
+            activities=[
+                RunActivity(run_type="easy", distance_mi=8.0, duration_min=72.0),
+                RunActivity(run_type="easy", distance_mi=6.0, duration_min=54.0),
+                RunActivity(run_type="tempo", distance_mi=8.0, duration_min=56.0),
+                RunActivity(run_type="interval", distance_mi=5.0, duration_min=35.0),
+            ],
+            rationale="quality-heavy week violating 80/20",
+        )
+        result = self.method.validate_plan(self.state, plan)
+        assert not result.is_valid
+        assert any("Easy" in v for v in result.violations)
+
+    def test_long_run_counts_as_easy(self):
+        # Per Daniels: long runs are at easy pace and count toward easy mileage budget.
+        # 27 mi total: easy 6 + easy 4 + long 8 + tempo 4 + recovery 5 = 23 easy / 27 = 85% → passes
         plan = PlanProposal(
             next_session_index=1,
             activities=[
                 RunActivity(run_type="easy", distance_mi=6.0, duration_min=54.0),
-                RunActivity(run_type="easy", distance_mi=6.0, duration_min=54.0),
                 RunActivity(run_type="easy", distance_mi=4.0, duration_min=36.0),
-                RunActivity(run_type="recovery", distance_mi=3.0, duration_min=30.0),
                 RunActivity(run_type="long", distance_mi=8.0, duration_min=72.0),
                 RunActivity(run_type="tempo", distance_mi=4.0, duration_min=28.0),
+                RunActivity(run_type="recovery", distance_mi=5.0, duration_min=50.0),
             ],
-            rationale="balanced 80/20 week ~31 mi",
+            rationale="balanced week with long run as easy mileage",
         )
         result = self.method.validate_plan(self.state, plan)
-        # 31 mi total, easy 19/31 = 61% — fails 80/20
-        assert not result.is_valid
-        assert any("Easy" in v for v in result.violations)
+        assert result.is_valid, result.violations
 
     def test_pure_easy_under_cap_valid(self):
         plan = PlanProposal(
@@ -314,14 +422,39 @@ class TestDaniersValidate:
         result = self.method.validate_plan(self.state, plan)
         assert not result.is_valid
 
+    def test_single_run_plan_rejected(self):
+        # A runner session is a week — single-run "weeks" must be rejected
+        plan = PlanProposal(
+            next_session_index=1,
+            activities=[RunActivity(run_type="easy", distance_mi=20.0, duration_min=180.0)],
+            rationale="single mega-run for the week",
+        )
+        result = self.method.validate_plan(self.state, plan)
+        assert not result.is_valid
+        assert any("at least" in v and "RunActivity" in v for v in result.violations)
+
+    def test_three_run_plan_accepted(self):
+        # 3 runs is the minimum threshold
+        plan = PlanProposal(
+            next_session_index=1,
+            activities=[
+                RunActivity(run_type="easy", distance_mi=8.0, duration_min=72.0),
+                RunActivity(run_type="easy", distance_mi=6.0, duration_min=54.0),
+                RunActivity(run_type="recovery", distance_mi=4.0, duration_min=40.0),
+            ],
+            rationale="3-run week, all easy",
+        )
+        result = self.method.validate_plan(self.state, plan)
+        assert result.is_valid, result.violations
+
 
 # ====================================================================
 # Daniels running — safety_check_transition + readiness
 # ====================================================================
 
-class TestDaniersSafety:
+class TestDanielsSafety:
     def test_mileage_increase_within_cap(self):
-        method = DaniersRunning()
+        method = DanielsRunning()
         state = make_runner(weekly=30.0)
         t = StateTransitionProposal(
             dimension="weekly_mileage", from_value=30.0, to_value=33.0,
@@ -331,7 +464,7 @@ class TestDaniersSafety:
         assert ok
 
     def test_mileage_jump_rejected(self):
-        method = DaniersRunning()
+        method = DanielsRunning()
         state = make_runner(weekly=30.0)
         t = StateTransitionProposal(
             dimension="weekly_mileage", from_value=30.0, to_value=40.0,
@@ -342,7 +475,7 @@ class TestDaniersSafety:
         assert "cap" in msg
 
     def test_vdot_change_within_cap(self):
-        method = DaniersRunning()
+        method = DanielsRunning()
         state = make_runner(vdot=45.0)
         t = StateTransitionProposal(
             dimension="vdot", from_value=45.0, to_value=45.3,
@@ -352,7 +485,7 @@ class TestDaniersSafety:
         assert ok
 
     def test_vdot_jump_rejected(self):
-        method = DaniersRunning()
+        method = DanielsRunning()
         state = make_runner(vdot=45.0)
         t = StateTransitionProposal(
             dimension="vdot", from_value=45.0, to_value=48.0,
@@ -362,7 +495,7 @@ class TestDaniersSafety:
         assert not ok
 
     def test_readiness_2_weeks_no_injury(self):
-        method = DaniersRunning()
+        method = DanielsRunning()
         ready = make_runner(weekly=30.0, weeks_at=2, injuries=[])
         not_yet = make_runner(weekly=30.0, weeks_at=1, injuries=[])
         injured = make_runner(weekly=30.0, weeks_at=4, injuries=["ITB syndrome"])

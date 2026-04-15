@@ -93,6 +93,7 @@ def agent_from_signature(
     model: str,
     instructions: str | None = None,
     tools: list | None = None,
+    output_retries: int = 1,
 ) -> Agent:
     """Derive a PydanticAI Agent from a DSPy Signature.
 
@@ -100,6 +101,11 @@ def agent_from_signature(
     - Signature docstring → default `instructions` (overridable at runtime
       via `Agent.override(instructions=...)` — the GEPA hook)
     - InputFields flow through as part of the prompt text (see node.run below)
+    - `output_retries` lets the caller override PydanticAI's default 1-retry
+      output validation cap. For complex discriminated-union outputs (e.g.,
+      ActivityRecord in fitness_coach) the LLM occasionally drops the
+      discriminator field; bumping retries to 3 makes such transient failures
+      recoverable instead of fatal.
 
     DSPy's runtime (`Predict`, `ChainOfThought`, `ReAct`) is deliberately not
     used; PydanticAI is the runtime. The signature serves as declarative
@@ -122,6 +128,7 @@ def agent_from_signature(
         model=model,
         output_type=output_type,
         instructions=default_instructions,
+        output_retries=output_retries,
         tools=tools or [],
     )
 

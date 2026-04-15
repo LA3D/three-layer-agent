@@ -82,7 +82,12 @@ class MethodologyProtocol(Protocol):
 
     methodology_id: str
 
-    def validate_plan(self, state: AthleteState, plan: PlanProposal) -> ValidationResult: ...
+    def validate_plan(
+        self,
+        state: AthleteState,
+        plan: PlanProposal,
+        halted_movements: frozenset[str] | set[str] = frozenset(),
+    ) -> ValidationResult: ...
 
     def safety_check_transition(
         self, state: AthleteState, transition: StateTransitionProposal,
@@ -108,6 +113,38 @@ NOVICE_INCREMENT_LB: dict[str, float] = {
     "row": 2.5,
 }
 
+# Rippetoe deload trigger: after this many consecutive failed sessions on a lift,
+# methodology requires a deload before any progression or hold is permitted.
+DELOAD_TRIGGER_CONSECUTIVE_FAILURES = 3
+DELOAD_PCT = 10.0
+
+
+def _build_linear_suggestion(violations: list[str]) -> str:
+    """Tailor a `suggested_adjustment` to the actual violations.
+
+    Replaces the previous canned message — gives the LLM specific actionable
+    guidance for the retry attempt rather than a generic reminder.
+    """
+    parts: list[str] = []
+    if any("consecutive failed sessions require a deload" in v for v in violations):
+        parts.append(
+            f"At least one lift requires a deload (≥{DELOAD_TRIGGER_CONSECUTIVE_FAILURES} "
+            f"consecutive failures): reduce affected loads by {DELOAD_PCT:.0f}%"
+        )
+    if any("exceeds allowed max" in v for v in violations):
+        parts.append(
+            "Cap loads at current + standard increment (squat/deadlift +5 lb, bench/ohp +2.5 lb)"
+        )
+    if any("non-lift activity" in v for v in violations):
+        parts.append("Linear progression is barbell-only; drop non-lift activities")
+    if any("not in athlete's current lift repertoire" in v for v in violations):
+        parts.append("Restrict exercises to those in the athlete's current_lifts")
+    if any("sets is outside" in v or "rep counts" in v for v in violations):
+        parts.append("Use 3-5 sets of 3-5 reps per lift")
+    if any("halted for this session" in v for v in violations):
+        parts.append("Drop or substitute halted movements; do not include them in the plan")
+    return "; ".join(parts) or "Address the violations listed above"
+
 
 class LinearProgression:
     """Rippetoe-style linear progression for novice powerlifters."""
@@ -117,7 +154,10 @@ class LinearProgression:
     # ----- validation -----
 
     def validate_plan(
-        self, state: AthleteState, plan: PlanProposal,
+        self,
+        state: AthleteState,
+        plan: PlanProposal,
+        halted_movements: frozenset[str] | set[str] = frozenset(),
     ) -> ValidationResult:
         if not isinstance(state, PowerlifterState):
             return ValidationResult(
@@ -131,6 +171,15 @@ class LinearProgression:
                 violations.append(
                     f"Plan contains non-lift activity ({activity.activity_type}); "
                     f"linear progression is barbell-only"
+                )
+                continue
+
+            # Halted movements: any signal of moderate+ severity on this lift
+            # removes the lift from this session's eligible plan.
+            if activity.exercise in halted_movements:
+                violations.append(
+                    f"{activity.exercise}: halted for this session due to safety signal "
+                    f"(moderate+ pain reported); drop or substitute"
                 )
                 continue
 
@@ -152,23 +201,35 @@ class LinearProgression:
                     f"+{MAX_LOAD_PROGRESSION_PCT_PER_SESSION}% cap)"
                 )
 
-            # Novice working sets: 3 sets of 5 (some lifts vary; allow 3-5 sets, 3-5 reps).
-            if activity.sets < 3 or activity.sets > 5:
+            # Novice working sets: per Rippetoe SS, deadlift is 1x5; squat / bench /
+            # ohp / row are 3x5. Allow 1 set for deadlift only; 3-5 for others.
+            min_sets = 1 if activity.exercise == "deadlift" else 3
+            if activity.sets < min_sets or activity.sets > 5:
                 violations.append(
-                    f"{activity.exercise}: {activity.sets} sets is outside novice range (3-5)"
+                    f"{activity.exercise}: {activity.sets} sets is outside novice range "
+                    f"({min_sets}-5)"
                 )
             if any(r < 3 or r > 5 for r in activity.reps_per_set):
                 violations.append(
                     f"{activity.exercise}: rep counts {activity.reps_per_set} outside novice range (3-5 per set)"
                 )
 
+            # Rippetoe deload rule: ≥3 consecutive failures on a lift requires a deload
+            # before any further progression or hold is permitted.
+            fail_count = state.consecutive_failed_sessions.get(activity.exercise, 0)
+            if fail_count >= DELOAD_TRIGGER_CONSECUTIVE_FAILURES:
+                deload_max = current * (1 - DELOAD_PCT / 100.0)
+                if activity.load_lb > deload_max + 0.01:
+                    violations.append(
+                        f"{activity.exercise}: {fail_count} consecutive failed sessions require a "
+                        f"deload to ≤{deload_max:.1f} lb (Rippetoe rule: deload {DELOAD_PCT:.0f}% "
+                        f"after {DELOAD_TRIGGER_CONSECUTIVE_FAILURES} failures, current {current} lb)"
+                    )
+
         return ValidationResult(
             is_valid=not violations,
             violations=violations,
-            suggested_adjustment=(
-                "Reduce loads to current ± standard increment; restrict to 3-5 sets of 3-5 reps."
-                if violations else None
-            ),
+            suggested_adjustment=_build_linear_suggestion(violations) if violations else None,
         )
 
     # ----- safety -----
@@ -205,6 +266,21 @@ class LinearProgression:
         return True, ""
 
     # ----- fallback plan -----
+    #
+    # `safe_default_plan` is invoked by FallbackPlanNode after the LLM has
+    # produced two consecutive validation-failing plans. The intent is "no
+    # progression, no change" — repeat what the athlete just did, at the
+    # same loads. This is the conservative choice for most stuck states:
+    # if the LLM cannot produce a valid plan, do not introduce novelty.
+    #
+    # Note: a previous review flagged this as "could amplify problems"
+    # (repeating a fatigued/painful session). That concern is real but
+    # belongs upstream — the right fix is correct state evolution and the
+    # halted_movements mechanism in validate_plan, not silently deloading
+    # in the fallback. Halt-worthy signals are handled at IngestNode
+    # (session-halt) and ValidateNode (movement-halt). What's left when
+    # fallback fires is a plan-shape problem (e.g., LLM proposed too-
+    # aggressive progression), and "do what they just did" is correct.
 
     def safe_default_plan(
         self, state: AthleteState, last_log: SessionLog | None,
@@ -260,27 +336,56 @@ class LinearProgression:
 # ====================================================================
 
 EASY_RUN_FRACTION_FLOOR = 0.80  # 80/20 rule: ≥80% of mileage should be easy/recovery
-QUALITY_RUN_TYPES = {"tempo", "interval", "long"}
-EASY_RUN_TYPES = {"easy", "recovery"}
+# Per Daniels: long runs are typically run at easy/easy-marathon pace, not at
+# threshold/interval intensity. They count toward the easy mileage budget,
+# not the quality budget. Quality work = tempo + interval only.
+QUALITY_RUN_TYPES = {"tempo", "interval"}
+EASY_RUN_TYPES = {"easy", "recovery", "long"}
+
+# A runner "session" represents one training week, not a single workout.
+# Daniels prescribes 4-6 runs per week in build phases; 3 is the minimum
+# floor below which the schedule is no longer a coherent training week.
+MIN_RUNS_PER_RUNNER_WEEK = 3
 
 
-class DaniersRunning:
-    """Daniels-style training rules for recreational distance runners.
+def _build_daniels_suggestion(violations: list[str]) -> str:
+    """Tailor a `suggested_adjustment` for the Daniels methodology."""
+    parts: list[str] = []
+    if any("contains no RunActivity" in v for v in violations):
+        parts.append("Daniels methodology is run-only; include RunActivity entries")
+    if any("Easy/recovery mileage" in v for v in violations):
+        parts.append(f"Maintain ≥{EASY_RUN_FRACTION_FLOOR:.0%} easy/recovery distribution (80/20 rule)")
+    if any("exceeds" in v and "cap" in v for v in violations):
+        parts.append(
+            f"Cap weekly mileage at +{MAX_MILEAGE_PROGRESSION_PCT_PER_WEEK:.0f}% over current"
+        )
+    if any("at least" in v and "RunActivity" in v for v in violations):
+        parts.append(
+            f"A runner session is a full training week — include at least "
+            f"{MIN_RUNS_PER_RUNNER_WEEK} distinct runs distributed across the week"
+        )
+    if any("halted for this session" in v for v in violations):
+        parts.append("Drop or substitute halted activities")
+    return "; ".join(parts) or "Address the violations listed above"
 
-    Spelled `DaniersRunning` to match the methodology_id `daniers` (typo
-    preserved if you spot it; the rule content is correct Daniels methodology)."""
+
+class DanielsRunning:
+    """Daniels-style training rules for recreational distance runners."""
 
     methodology_id = "daniels"
 
     # ----- validation -----
 
     def validate_plan(
-        self, state: AthleteState, plan: PlanProposal,
+        self,
+        state: AthleteState,
+        plan: PlanProposal,
+        halted_movements: frozenset[str] | set[str] = frozenset(),
     ) -> ValidationResult:
         if not isinstance(state, RunnerState):
             return ValidationResult(
                 is_valid=False,
-                violations=[f"DaniersRunning cannot validate {type(state).__name__}"],
+                violations=[f"DanielsRunning cannot validate {type(state).__name__}"],
             )
 
         violations: list[str] = []
@@ -288,6 +393,23 @@ class DaniersRunning:
         if not runs:
             violations.append("Plan contains no RunActivity; daniels methodology is run-only.")
             return ValidationResult(is_valid=False, violations=violations)
+
+        # A runner session is a week, not a workout — must contain a coherent
+        # training distribution, not a single mega-run.
+        if len(runs) < MIN_RUNS_PER_RUNNER_WEEK:
+            violations.append(
+                f"Runner sessions represent a training week and must contain at least "
+                f"{MIN_RUNS_PER_RUNNER_WEEK} distinct RunActivity entries; plan has {len(runs)}"
+            )
+
+        # Halted movements for runners: a "movement" can be the activity's run_type
+        # (e.g., "long" halted due to ITB) OR the generic token "running" (full halt).
+        for r in runs:
+            if r.run_type in halted_movements or "running" in halted_movements:
+                violations.append(
+                    f"{r.run_type}: run type halted for this session due to safety signal; "
+                    f"substitute with easy/recovery or omit"
+                )
 
         # 80/20 distribution
         total_mi = sum(r.distance_mi for r in runs)
@@ -310,10 +432,7 @@ class DaniersRunning:
         return ValidationResult(
             is_valid=not violations,
             violations=violations,
-            suggested_adjustment=(
-                "Cap weekly mileage at +10% over current; ensure ≥80% easy distribution."
-                if violations else None
-            ),
+            suggested_adjustment=_build_daniels_suggestion(violations) if violations else None,
         )
 
     # ----- safety -----
@@ -354,28 +473,41 @@ class DaniersRunning:
     def safe_default_plan(
         self, state: AthleteState, last_log: SessionLog | None,
     ) -> PlanProposal:
-        assert isinstance(state, RunnerState)
-        if last_log is not None:
-            runs = [a for a in last_log.activity_log if isinstance(a, RunActivity)]
-            if runs:
-                next_index = last_log.session_index + 1
-                return PlanProposal(
-                    next_session_index=next_index,
-                    activities=[a.model_copy() for a in runs],
-                    rationale="Safe-default plan: repeat last session's runs at same volume.",
-                )
+        """Produce a conservative all-easy training week sized to the athlete's
+        baseline mileage.
 
-        # No prior session — produce a single easy run at the current mileage / 7.
+        Important: the prior session log may be SPARSE (skipped week, illness)
+        and therefore is NOT a reliable basis for repeating volume. We always
+        derive the safe-default plan from `state.current_weekly_mileage` (the
+        preserved baseline, see run.evolve_state). Distribute that mileage
+        across 4 easy runs to satisfy the MIN_RUNS_PER_RUNNER_WEEK constraint
+        and the 80/20 distribution.
+        """
+        assert isinstance(state, RunnerState)
         next_index = 0 if last_log is None else last_log.session_index + 1
-        easy_distance = max(2.0, state.current_weekly_mileage / 7.0)
+        baseline = max(state.current_weekly_mileage, 4.0)  # never go below ~4 mi/wk
+
+        # 4 easy runs, roughly equal distribution (with a slightly longer one).
+        per_run = baseline / 4.0
+        long_extra = baseline * 0.10  # ~10% bumped to the longer day
+        runs: list = [
+            RunActivity(run_type="easy", distance_mi=round(per_run - long_extra / 3, 1),
+                        duration_min=round((per_run - long_extra / 3) * 9.0, 1)),
+            RunActivity(run_type="easy", distance_mi=round(per_run - long_extra / 3, 1),
+                        duration_min=round((per_run - long_extra / 3) * 9.0, 1)),
+            RunActivity(run_type="recovery", distance_mi=round(per_run - long_extra / 3, 1),
+                        duration_min=round((per_run - long_extra / 3) * 10.0, 1)),
+            RunActivity(run_type="long", distance_mi=round(per_run + long_extra, 1),
+                        duration_min=round((per_run + long_extra) * 9.0, 1)),
+        ]
         return PlanProposal(
             next_session_index=next_index,
-            activities=[RunActivity(
-                run_type="easy",
-                distance_mi=easy_distance,
-                duration_min=easy_distance * 9.0,  # ~9 min/mi default
-            )],
-            rationale="Safe-default plan: single easy run sized to current weekly mileage.",
+            activities=runs,
+            rationale=(
+                f"Safe-default plan: conservative all-easy week sized to baseline "
+                f"({baseline:.1f} mi), distributed across 4 runs. Holds mileage "
+                f"and avoids quality work."
+            ),
         )
 
     # ----- readiness -----
@@ -398,7 +530,7 @@ class DaniersRunning:
 
 METHODOLOGIES: dict[str, MethodologyProtocol] = {
     "linear_progression": LinearProgression(),
-    "daniels": DaniersRunning(),
+    "daniels": DanielsRunning(),
 }
 
 
