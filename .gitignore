@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Per-session trace outputs from fitness_coach demo
+fitness_coach/traces/

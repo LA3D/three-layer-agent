@@ -16,3 +16,8 @@ dependencies = [
 
 [project.urls]
 Repository = "https://github.com/LA3D/three-layer-agent"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

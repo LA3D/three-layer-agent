@@ -20,6 +20,7 @@ Plus the **GEPA hook** via `Agent.override(instructions=...)` for runtime prompt
 - `toy_branching.py` — branching state graph with runtime routing (Triage → one of three category-specific Answer nodes). Demonstrates real FSM behavior with type-directed transitions.
 - `toy_loop_persist.py` — critic loop (Generate → Critique → loop back or end) with both `FullStatePersistence` (in-memory trajectory) and `FileStatePersistence` (JSON on disk, resumable after crash).
 - `toy_gepa_optimize.py` — closes the loop: offline GEPA optimization of a DSPy Signature's instruction, producing the artifact that `Agent.override()` consumes at runtime. Custom `GEPAAdapter` bridges GEPA's candidate dict to the PydanticAI agent. Demonstrates train 75% → 100% lift from an adversarial seed.
+- [`fitness_coach/`](./fitness_coach/) — multi-session agentic toy. Architectural parallel to the ACE-AI cognitive core: longitudinal state, clinician-handoff document, evidence with provenance, per-step validation with deterministic fallback, hard safety overrides, cross-population generality (powerlifters + runners), side-by-side comparison vs. a rigid expert-system "straw coach". 9-node FSM with 23 + 32 unit tests. See [`fitness_coach/README.md`](./fitness_coach/README.md).
 
 ## Run
 
