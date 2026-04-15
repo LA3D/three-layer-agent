@@ -19,6 +19,7 @@ Plus the **GEPA hook** via `Agent.override(instructions=...)` for runtime prompt
 - `toy.py` — linear two-node pipeline (Triage → Answer). Demonstrates the core composition + GEPA override hook.
 - `toy_branching.py` — branching state graph with runtime routing (Triage → one of three category-specific Answer nodes). Demonstrates real FSM behavior with type-directed transitions.
 - `toy_loop_persist.py` — critic loop (Generate → Critique → loop back or end) with both `FullStatePersistence` (in-memory trajectory) and `FileStatePersistence` (JSON on disk, resumable after crash).
+- `toy_gepa_optimize.py` — closes the loop: offline GEPA optimization of a DSPy Signature's instruction, producing the artifact that `Agent.override()` consumes at runtime. Custom `GEPAAdapter` bridges GEPA's candidate dict to the PydanticAI agent. Demonstrates train 75% → 100% lift from an adversarial seed.
 
 ## Run
 
@@ -26,6 +27,7 @@ Plus the **GEPA hook** via `Agent.override(instructions=...)` for runtime prompt
 uv run python toy.py
 uv run python toy_branching.py
 uv run python toy_loop_persist.py
+uv run python toy_gepa_optimize.py
 ```
 
 Requires `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` in environment. Uses `gpt-4o-mini` (Triage) and `claude-haiku-4-5` (Answer) — demonstrates heterogeneous-model composition; costs pennies per run.
