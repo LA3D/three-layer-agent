@@ -97,9 +97,9 @@ class PlanSignature(dspy.Signature):
     observation: ObservationOutput = dspy.InputField(
         desc="Coded observation from the session that just happened",
     )
-    prior_handoff: str = dspy.InputField(
+    prior_handoff: HandoffDoc | None = dspy.InputField(
         desc="Handoff document from the previous session (areas to work on, what worked, "
-             "what to watch for). Empty string if this is session 0.",
+             "what to watch for). None if this is the first session.",
     )
     plan: PlanProposal = dspy.OutputField(
         desc="Prescription for the NEXT session — activities + rationale",

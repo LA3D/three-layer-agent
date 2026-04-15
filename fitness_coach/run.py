@@ -39,6 +39,7 @@ from fitness_coach.graph import (
 from fitness_coach.schemas import (
     AthleteState,
     HaltedSession,
+    HandoffDoc,
     LiftActivity,
     PowerlifterState,
     RunActivity,
@@ -155,7 +156,7 @@ def _surprise_summary(log: SessionLog) -> tuple[bool, str]:
 async def run_one_session(
     state: AthleteState,
     log: SessionLog,
-    prior_handoff: str,
+    prior_handoff: "HandoffDoc | None",
 ) -> tuple[SessionResult | HaltedSession, StrawCoachOutput, EvaluatorReport, EvaluatorReport]:
     """Run both systems on one (state, log) pair and evaluate both."""
     graph = build_graph()
@@ -200,7 +201,7 @@ async def run_athlete_arc(
 ) -> list[SessionComparison]:
     """Run the full 6-session arc for one athlete."""
     state = initial_state
-    prior_handoff = ""
+    prior_handoff: HandoffDoc | None = None
     comparisons: list[SessionComparison] = []
 
     for i, log in enumerate(sessions):
@@ -228,11 +229,11 @@ async def run_athlete_arc(
             agentic_used_fallback=agentic_used_fallback,
         ))
 
-        # Update prior_handoff for next session
+        # Pass typed HandoffDoc forward to the next session (or None on halt).
         if isinstance(agentic_output, SessionResult):
-            prior_handoff = agentic_output.handoff.model_dump_json(indent=2)
+            prior_handoff = agentic_output.handoff
         else:
-            prior_handoff = f"Previous session was halted: {agentic_output.reason}"
+            prior_handoff = None  # halted session — no usable handoff
 
     return comparisons
 

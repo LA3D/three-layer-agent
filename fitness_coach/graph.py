@@ -75,7 +75,7 @@ class SessionState:
     # Inputs (set by caller before graph.run / graph.iter)
     athlete_state: AthleteState
     session_log: SessionLog
-    prior_handoff: str = ""  # serialized HandoffDoc from previous session, "" if first
+    prior_handoff: HandoffDoc | None = None  # from previous session's SummarizeNode
 
     # Outputs accumulated through the graph
     observation: ObservationOutput | None = None
@@ -99,15 +99,19 @@ class SessionState:
 
 def _render_prompt(signature_cls, **inputs) -> str:
     """Format a prompt using the signature's InputField labels + descriptions,
-    serializing Pydantic models to JSON for readability inside the LLM context."""
+    serializing Pydantic models to JSON for readability inside the LLM context.
+
+    None values render as a sentinel (e.g. "(none)") rather than crashing —
+    relevant for nullable inputs like `prior_handoff: HandoffDoc | None`."""
     lines = []
     for name, field_info in signature_cls.input_fields.items():
         prefix = field_info.json_schema_extra.get("prefix", f"{name}:")
         desc = field_info.json_schema_extra.get("desc", "")
         value = inputs[name]
 
-        # Serialize Pydantic models to JSON; pass strings through.
-        if hasattr(value, "model_dump_json"):
+        if value is None:
+            value = "(none)"
+        elif hasattr(value, "model_dump_json"):
             value = value.model_dump_json(indent=2)
         elif isinstance(value, list) and value and hasattr(value[0], "model_dump"):
             import json
@@ -228,7 +232,7 @@ class PlanNode(BaseNode[SessionState, None, SessionEndResult]):
             PlanSignature,
             athlete_state=ctx.state.athlete_state,
             observation=ctx.state.observation,
-            prior_handoff=ctx.state.prior_handoff or "(no prior handoff — this is the first session)",
+            prior_handoff=ctx.state.prior_handoff,
         ) + halted_hint + retry_hint
 
         result = await agent.run(prompt)
