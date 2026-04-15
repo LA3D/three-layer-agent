@@ -1,0 +1,18 @@
+[project]
+name = "three-layer-agent"
+version = "0.1.0"
+description = "Three-layer agent composition: DSPy signatures (declarative) + PydanticAI (runtime) + pydantic-graph (typed state machine) with GEPA hook"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    {name = "Charles F. Vardeman II", email = "cvardema@nd.edu"},
+]
+license = {text = "MIT"}
+dependencies = [
+    "dspy>=3.0",
+    "pydantic-ai>=1.0",
+    "pydantic-graph>=1.0",
+]
+
+[project.urls]
+Repository = "https://github.com/LA3D/three-layer-agent"
