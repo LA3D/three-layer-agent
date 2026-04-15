@@ -18,12 +18,14 @@ Plus the **GEPA hook** via `Agent.override(instructions=...)` for runtime prompt
 
 - `toy.py` — linear two-node pipeline (Triage → Answer). Demonstrates the core composition + GEPA override hook.
 - `toy_branching.py` — branching state graph with runtime routing (Triage → one of three category-specific Answer nodes). Demonstrates real FSM behavior with type-directed transitions.
+- `toy_loop_persist.py` — critic loop (Generate → Critique → loop back or end) with both `FullStatePersistence` (in-memory trajectory) and `FileStatePersistence` (JSON on disk, resumable after crash).
 
 ## Run
 
 ```bash
 uv run python toy.py
 uv run python toy_branching.py
+uv run python toy_loop_persist.py
 ```
 
 Requires `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` in environment. Uses `gpt-4o-mini` (Triage) and `claude-haiku-4-5` (Answer) — demonstrates heterogeneous-model composition; costs pennies per run.
@@ -32,7 +34,7 @@ Requires `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` in environment. Uses `gpt-4o-m
 
 `toy_branching.py` renders to this Mermaid diagram, auto-generated from `run()` return-type annotations:
 
-```
+```mermaid
 stateDiagram-v2
   TriageNode --> FactualAnswerNode
   TriageNode --> ReasoningAnswerNode
@@ -50,6 +52,17 @@ match ctx.state.triage.category:
     case "reasoning":  return ReasoningAnswerNode()
     case "creative":   return CreativeAnswerNode()
 ```
+
+`toy_loop_persist.py` shows the loop-back pattern:
+
+```mermaid
+stateDiagram-v2
+  GenerateNode --> CritiqueNode
+  CritiqueNode --> GenerateNode
+  CritiqueNode --> [*]
+```
+
+The loop is declared by `CritiqueNode.run() -> GenerateNode | End[AcceptedDraft]` — the Union makes both transitions legal. The runtime decision (loop back or end) depends on state content (the critic's accept/reject verdict).
 
 ## The composition pattern
 
